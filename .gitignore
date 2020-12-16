@@ -17,9 +17,15 @@
 # Binary
 kafka_exporter
 
+#Builds
+*.tar.gz
+
 # Project IDE
 .idea/
 *.iml
 
 # Test configuration
 test/
+
+# Vendor folder
+vendor/
