@@ -85,6 +85,8 @@ type Exporter struct {
 	sgChans                 []chan<- prometheus.Metric
 	consumerGroupFetchAll   bool
 	groupMetricsTimeout     time.Duration
+	useTimeLag              bool
+	timeLagWindow           time.Duration
 }
 
 type kafkaOpts struct {
@@ -126,6 +128,8 @@ type kafkaOpts struct {
 	allowAutoTopicCreation   bool
 	verbosityLogLevel        int
 	groupMetricsTimeout      string
+	useTimeLag               bool
+	timeLagWindow            string
 }
 
 type MSKAccessTokenProvider struct {
@@ -343,6 +347,14 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		return nil, fmt.Errorf("Cannot parse metadata refresh interval: %w", err)
 	}
 
+	var timeLagWindow time.Duration
+	if opts.useTimeLag {
+		timeLagWindow, err = time.ParseDuration(opts.timeLagWindow)
+		if err != nil {
+			return nil, fmt.Errorf("Cannot parse lag time window: %w", err)
+		}
+	}
+
 	config.Metadata.RefreshFrequency = interval
 
 	config.Metadata.AllowAutoTopicCreation = opts.allowAutoTopicCreation
@@ -373,6 +385,8 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		sgChans:                 []chan<- prometheus.Metric{},
 		consumerGroupFetchAll:   config.Version.IsAtLeast(sarama.V2_0_0_0),
 		groupMetricsTimeout:     groupMetricsTimeout,
+		useTimeLag:              opts.useTimeLag,
+		timeLagWindow:           timeLagWindow,
 	}, nil
 }
 
@@ -914,6 +928,8 @@ func main() {
 	toFlagBoolVar("kafka.allow-auto-topic-creation", "If true, the broker may auto-create topics that we requested which do not already exist, default is false.", false, "false", &opts.allowAutoTopicCreation)
 	toFlagIntVar("verbosity", "Verbosity log level", 0, "0", &opts.verbosityLogLevel)
 	toFlagStringVar("group.metrics.timeout", "Timeout for emitting consumer group metrics", "5m", &opts.groupMetricsTimeout)
+	toFlagBoolVar("lag.show-time", "Show estimated time-based consumer group lag (kafka_consumergroup_lag_seconds), default is false.", false, "false", &opts.useTimeLag)
+	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.show-time", "1m", &opts.timeLagWindow)
 
 	plConfig := plog.Config{}
 	plogflag.AddFlags(kingpin.CommandLine, &plConfig)
