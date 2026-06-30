@@ -61,6 +61,7 @@ var (
 	consumergroupLagSum                *prometheus.Desc
 	consumergroupLagZookeeper          *prometheus.Desc
 	consumergroupMembers               *prometheus.Desc
+	consumergroupLagSeconds            *prometheus.Desc
 )
 
 // Exporter collects Kafka stats from the given server and exports them using
@@ -419,6 +420,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- consumergroupLag
 	ch <- consumergroupLagZookeeper
 	ch <- consumergroupLagSum
+	ch <- consumergroupLagSeconds
 }
 
 // Collect fetches the stats from configured Kafka location and delivers them
@@ -1066,6 +1068,12 @@ func setup(
 		prometheus.BuildFQName(namespace, "consumergroup", "members"),
 		"Amount of members in a consumer group",
 		[]string{"consumergroup"}, labels,
+	)
+
+	consumergroupLagSeconds = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "consumergroup", "lag_seconds"),
+		"Estimated sojourn time of a ConsumerGroup at Topic/Partition in seconds, derived from arrival rate over a lookback window (assumes approximately constant throughput)",
+		[]string{"consumergroup", "topic", "partition"}, labels,
 	)
 
 	if logSarama {
