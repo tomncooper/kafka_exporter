@@ -485,6 +485,10 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 	}
 
 	offset := make(map[string]map[int32]int64)
+	var rateOffset map[string]map[int32]int64
+	if e.useTimeLag {
+		rateOffset = make(map[string]map[int32]int64)
+	}
 
 	now := time.Now()
 
@@ -527,6 +531,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 		)
 		e.mu.Lock()
 		offset[topic] = make(map[int32]int64, len(partitions))
+		if e.useTimeLag {
+			rateOffset[topic] = make(map[int32]int64, len(partitions))
+		}
 		e.mu.Unlock()
 		for _, partition := range partitions {
 			broker, err := e.client.Leader(topic, partition)
@@ -557,6 +564,16 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 				ch <- prometheus.MustNewConstMetric(
 					topicOldestOffset, prometheus.GaugeValue, float64(oldestOffset), topic, strconv.FormatInt(int64(partition), 10),
 				)
+			}
+
+			if e.useTimeLag {
+				windowOffset, err := e.client.GetOffset(topic, partition,
+					time.Now().UnixMilli()-e.timeLagWindow.Milliseconds())
+				if err == nil {
+					e.mu.Lock()
+					rateOffset[topic][partition] = windowOffset
+					e.mu.Unlock()
+				}
 			}
 
 			replicas, err := e.client.Replicas(topic, partition)
@@ -694,7 +711,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 			}
 
 			err := pool.Submit(func() {
-				e.emitGroupMetrics(group, broker, offset, ch)
+				e.emitGroupMetrics(group, broker, offset, rateOffset, ch)
 			})
 			if err != nil {
 				klog.Errorf("Cannot submit task to pool: %v", err)
@@ -736,7 +753,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sarama.Broker, offsetMap map[string]map[int32]int64, ch chan<- prometheus.Metric) {
+func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sarama.Broker, offsetMap map[string]map[int32]int64, rateOffsetMap map[string]map[int32]int64, ch chan<- prometheus.Metric) {
 	offsetFetchRequest := sarama.OffsetFetchRequest{ConsumerGroup: group.GroupId, Version: e.fetchOffsetVersion()}
 	if e.offsetShowAll {
 		for topic, partitions := range offsetMap {
