@@ -573,6 +573,8 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 					e.mu.Lock()
 					rateOffset[topic][partition] = windowOffset
 					e.mu.Unlock()
+				} else {
+					klog.Errorf("Cannot get rate offset of topic %s partition %d: %v", topic, partition, err)
 				}
 			}
 
@@ -845,7 +847,7 @@ func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sara
 					consumergroupLag, prometheus.GaugeValue, float64(lag), group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 				)
 				if e.useTimeLag && rateOffsetMap != nil {
-					if windowOffset, ok := rateOffsetMap[topic][partition]; ok {
+					if windowOffset, ok := rateOffsetMap[topic][partition]; ok && windowOffset >= 0 {
 						rate := float64(currentPartitionOffset-windowOffset) / e.timeLagWindow.Seconds()
 						if rate > 0 && lag > 0 {
 							lagSeconds := float64(lag) / rate
