@@ -150,6 +150,8 @@ This image is configurable using different flags
 | concurrent.enable              | false          | If true, all scrapes will trigger kafka operations otherwise, they will share results. WARN: This should be disabled on large clusters         |
 | topic.workers                  | 100            | Number of topic workers                                                                                                                        |
 | verbosity                      | 0              | Verbosity log level                                                                                                                            |
+| lag.emit-estimated-time        | false          | Enable estimated time-based consumer group lag metric (`kafka_consumergroup_estimated_lag_seconds`)                                            |
+| lag.time-window                | 1m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time`                                                                  |
 
 ### Notes
 
@@ -260,6 +262,7 @@ Describe all groups.
 | `kafka_consumergroup_lag_sum`                | Current Approximate Lag of a ConsumerGroup at Topic for all partitions   |
 | `kafka_consumergroupzookeeper_lag_zookeeper` | Current Approximate Lag(zookeeper) of a ConsumerGroup at Topic/Partition |
 | `kafka_consumergroup_members`                | Amount of members in a consumer group                                    |
+| `kafka_consumergroup_estimated_lag_seconds`  | Estimated time-based lag of a ConsumerGroup at Topic/Partition (requires `--lag.emit-estimated-time`) |
 
 #### Important Note
 
@@ -267,6 +270,31 @@ To be able to collect the metrics `kafka_consumergroupzookeeper_lag_zookeeper`, 
 
 * `use.consumelag.zookeeper`: enable collect consume lag from zookeeper
 * `zookeeper.server`: address for connection to zookeeper
+
+#### Time-Based Lag Estimation
+
+To enable the metric `kafka_consumergroup_estimated_lag_seconds`, you must set the flag:
+
+* `lag.emit-estimated-time`: enable estimated time-based consumer group lag
+
+Optionally, you can tune the lookback window (default `1m`):
+
+* `lag.time-window`: how far back to look when estimating the message arrival rate (e.g. `30s`, `2m`, `5m`)
+
+**How it works:** The metric estimates how long a message sits in the partition before the consumer reads it (sojourn time), using Little's Law: `W = L / λ`, where `L` is the offset-based lag and `λ` is the message arrival rate estimated over the lookback window.
+
+**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the lookback window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag."
+
+**Accuracy caveats:**
+
+| Scenario | Effect on estimate |
+|---|---|
+| Steady throughput | Accurate |
+| Burst ended, consumer behind | Overestimates (looks worse than reality) |
+| New burst starting, consumer behind | Underestimates (masks real staleness) |
+| Compacted topic with offset gaps | Underestimates |
+
+This is a rough operational signal, not an SLA-grade measurement. For exact sojourn time, you would need to read the actual record timestamps at the consumer's committed offset.
 
 **Metrics output example**
 
@@ -290,6 +318,10 @@ kafka_consumergroup_lag_sum{consumergroup="KMOffsetCache-kafka-manager-380627653
 # HELP kafka_consumergroup_members Amount of members in a consumer group
 # TYPE kafka_consumergroup_members gauge
 kafka_consumergroup_members{consumergroup="KMOffsetCache-kafka-manager-3806276532-ml44w"} 1
+
+# HELP kafka_consumergroup_estimated_lag_seconds Estimated sojourn time of a ConsumerGroup at Topic/Partition in seconds, derived from arrival rate over a lookback window (assumes approximately constant throughput)
+# TYPE kafka_consumergroup_estimated_lag_seconds gauge
+kafka_consumergroup_estimated_lag_seconds{consumergroup="KMOffsetCache-kafka-manager-3806276532-ml44w",partition="0",topic="__consumer_offsets"} 12.5
 
 ```
 

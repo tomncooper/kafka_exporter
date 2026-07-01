@@ -61,7 +61,7 @@ var (
 	consumergroupLagSum                *prometheus.Desc
 	consumergroupLagZookeeper          *prometheus.Desc
 	consumergroupMembers               *prometheus.Desc
-	consumergroupLagSeconds            *prometheus.Desc
+	consumergroupEstimatedLagSeconds            *prometheus.Desc
 )
 
 // Exporter collects Kafka stats from the given server and exports them using
@@ -86,8 +86,8 @@ type Exporter struct {
 	sgChans                 []chan<- prometheus.Metric
 	consumerGroupFetchAll   bool
 	groupMetricsTimeout     time.Duration
-	useTimeLag              bool
-	timeLagWindow           time.Duration
+	emitEstimatedTimeLag              bool
+	estimatedTimeLagWindow           time.Duration
 }
 
 type kafkaOpts struct {
@@ -129,8 +129,8 @@ type kafkaOpts struct {
 	allowAutoTopicCreation   bool
 	verbosityLogLevel        int
 	groupMetricsTimeout      string
-	useTimeLag               bool
-	timeLagWindow            string
+	emitEstimatedTimeLag               bool
+	estimatedTimeLagWindow            string
 }
 
 type MSKAccessTokenProvider struct {
@@ -348,9 +348,9 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		return nil, fmt.Errorf("Cannot parse metadata refresh interval: %w", err)
 	}
 
-	var timeLagWindow time.Duration
-	if opts.useTimeLag {
-		timeLagWindow, err = time.ParseDuration(opts.timeLagWindow)
+	var estimatedTimeLagWindow time.Duration
+	if opts.emitEstimatedTimeLag {
+		estimatedTimeLagWindow, err = time.ParseDuration(opts.estimatedTimeLagWindow)
 		if err != nil {
 			return nil, fmt.Errorf("Cannot parse lag time window: %w", err)
 		}
@@ -386,8 +386,8 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		sgChans:                 []chan<- prometheus.Metric{},
 		consumerGroupFetchAll:   config.Version.IsAtLeast(sarama.V2_0_0_0),
 		groupMetricsTimeout:     groupMetricsTimeout,
-		useTimeLag:              opts.useTimeLag,
-		timeLagWindow:           timeLagWindow,
+		emitEstimatedTimeLag:              opts.emitEstimatedTimeLag,
+		estimatedTimeLagWindow:           estimatedTimeLagWindow,
 	}, nil
 }
 
@@ -420,7 +420,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- consumergroupLag
 	ch <- consumergroupLagZookeeper
 	ch <- consumergroupLagSum
-	ch <- consumergroupLagSeconds
+	ch <- consumergroupEstimatedLagSeconds
 }
 
 // Collect fetches the stats from configured Kafka location and delivers them
@@ -486,7 +486,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 
 	offset := make(map[string]map[int32]int64)
 	var rateOffset map[string]map[int32]int64
-	if e.useTimeLag {
+	if e.emitEstimatedTimeLag {
 		rateOffset = make(map[string]map[int32]int64)
 	}
 
@@ -531,7 +531,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 		)
 		e.mu.Lock()
 		offset[topic] = make(map[int32]int64, len(partitions))
-		if e.useTimeLag {
+		if e.emitEstimatedTimeLag {
 			rateOffset[topic] = make(map[int32]int64, len(partitions))
 		}
 		e.mu.Unlock()
@@ -566,9 +566,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 				)
 			}
 
-			if e.useTimeLag {
+			if e.emitEstimatedTimeLag {
 				windowOffset, err := e.client.GetOffset(topic, partition,
-					time.Now().UnixMilli()-e.timeLagWindow.Milliseconds())
+					time.Now().UnixMilli()-e.estimatedTimeLagWindow.Milliseconds())
 				if err == nil {
 					e.mu.Lock()
 					rateOffset[topic][partition] = windowOffset
@@ -846,13 +846,13 @@ func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sara
 				ch <- prometheus.MustNewConstMetric(
 					consumergroupLag, prometheus.GaugeValue, float64(lag), group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 				)
-				if e.useTimeLag && rateOffsetMap != nil {
+				if e.emitEstimatedTimeLag && rateOffsetMap != nil {
 					if windowOffset, ok := rateOffsetMap[topic][partition]; ok && windowOffset >= 0 {
-						rate := float64(currentPartitionOffset-windowOffset) / e.timeLagWindow.Seconds()
+						rate := float64(currentPartitionOffset-windowOffset) / e.estimatedTimeLagWindow.Seconds()
 						if rate > 0 && lag > 0 {
 							lagSeconds := float64(lag) / rate
 							ch <- prometheus.MustNewConstMetric(
-								consumergroupLagSeconds, prometheus.GaugeValue, lagSeconds,
+								consumergroupEstimatedLagSeconds, prometheus.GaugeValue, lagSeconds,
 								group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 							)
 						}
@@ -961,8 +961,8 @@ func main() {
 	toFlagBoolVar("kafka.allow-auto-topic-creation", "If true, the broker may auto-create topics that we requested which do not already exist, default is false.", false, "false", &opts.allowAutoTopicCreation)
 	toFlagIntVar("verbosity", "Verbosity log level", 0, "0", &opts.verbosityLogLevel)
 	toFlagStringVar("group.metrics.timeout", "Timeout for emitting consumer group metrics", "5m", &opts.groupMetricsTimeout)
-	toFlagBoolVar("lag.show-time", "Show estimated time-based consumer group lag (kafka_consumergroup_lag_seconds), default is false.", false, "false", &opts.useTimeLag)
-	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.show-time", "1m", &opts.timeLagWindow)
+	toFlagBoolVar("lag.emit-estimated-time", "Enable estimated time-based consumer group lag metric (kafka_consumergroup_estimated_lag_seconds), default is false.", false, "false", &opts.emitEstimatedTimeLag)
+	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.emit-estimated-time", "1m", &opts.estimatedTimeLagWindow)
 
 	plConfig := plog.Config{}
 	plogflag.AddFlags(kingpin.CommandLine, &plConfig)
@@ -1101,8 +1101,8 @@ func setup(
 		[]string{"consumergroup"}, labels,
 	)
 
-	consumergroupLagSeconds = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "consumergroup", "lag_seconds"),
+	consumergroupEstimatedLagSeconds = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "consumergroup", "estimated_lag_seconds"),
 		"Estimated sojourn time of a ConsumerGroup at Topic/Partition in seconds, derived from arrival rate over a lookback window (assumes approximately constant throughput)",
 		[]string{"consumergroup", "topic", "partition"}, labels,
 	)
