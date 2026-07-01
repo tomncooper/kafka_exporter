@@ -962,7 +962,7 @@ func main() {
 	toFlagIntVar("verbosity", "Verbosity log level", 0, "0", &opts.verbosityLogLevel)
 	toFlagStringVar("group.metrics.timeout", "Timeout for emitting consumer group metrics", "5m", &opts.groupMetricsTimeout)
 	toFlagBoolVar("lag.emit-estimated-time", "Enable estimated time-based consumer group lag metric (kafka_consumergroup_estimated_lag_seconds), default is false.", false, "false", &opts.emitEstimatedTimeLag)
-	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.emit-estimated-time", "1m", &opts.estimatedTimeLagWindow)
+	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.emit-estimated-time", "5m", &opts.estimatedTimeLagWindow)
 
 	plConfig := plog.Config{}
 	plogflag.AddFlags(kingpin.CommandLine, &plConfig)

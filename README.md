@@ -151,7 +151,7 @@ This image is configurable using different flags
 | topic.workers                  | 100            | Number of topic workers                                                                                                                        |
 | verbosity                      | 0              | Verbosity log level                                                                                                                            |
 | lag.emit-estimated-time        | false          | Enable estimated time-based consumer group lag metric (`kafka_consumergroup_estimated_lag_seconds`)                                            |
-| lag.time-window                | 1m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time` [(1)](#duration-format)                                          |
+| lag.time-window                | 5m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time` [(1)](#duration-format)                                          |
 | group.metrics.timeout          | 5m             | Timeout for emitting consumer group metrics [(1)](#duration-format)                                                                             |
 
 ### Notes
@@ -288,13 +288,13 @@ To enable the metric `kafka_consumergroup_estimated_lag_seconds`, you must set t
 
 * `lag.emit-estimated-time`: enable estimated time-based consumer group lag
 
-Optionally, you can tune the look-back window (default `1m`):
+Optionally, you can tune the look-back window (default `5m`):
 
 * `lag.time-window`: how far back to look when estimating the message arrival rate (e.g. `30s`, `2m`, `5m`)
 
 **How it works:** The metric estimates how long a message sits in the partition before the consumer reads it (sojourn time), using Little's Law: `W = L / λ`, where `L` is the offset-based lag and `λ` is the message arrival rate estimated over the look-back window.
 
-**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the look-back window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag."
+**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the look-back window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag." Do not alert on `absent(kafka_consumergroup_estimated_lag_seconds)` — use the offset-based `kafka_consumergroup_lag` metric for availability alerting instead. For low-throughput topics where the metric appears intermittently, increase `--lag.time-window` (e.g. `10m`, `15m`) to capture enough messages for a reliable rate estimate.
 
 **Accuracy caveats:**
 
@@ -304,6 +304,22 @@ Optionally, you can tune the look-back window (default `1m`):
 | Burst ended, consumer behind | Overestimates (looks worse than reality) |
 | New burst starting, consumer behind | Underestimates (masks real staleness) |
 | Compacted topic with offset gaps | Underestimates |
+
+**Choosing a look-back window:**
+
+The look-back window controls how far back the exporter looks to estimate message arrival rate. Shorter windows react faster to throughput changes but are noisier; longer windows are more stable but slower to reflect shifts.
+
+| Window | Best for | Trade-off |
+|---|---|---|
+| `1m`–`2m` | High-throughput topics (thousands of msgs/sec) where you want the estimate to track rapid changes | Noisy on low-throughput topics — may produce no estimate at all if too few messages arrive in the window |
+| `5m` (default) | Most workloads — balances stability and responsiveness | May lag behind sudden throughput changes by a few minutes |
+| `10m`–`15m` | Low-throughput topics (fewer than ~1 msg/sec) or when you want a very stable signal for dashboards | Slow to react to bursts or drops — the estimate reflects the average rate over the full window |
+
+As a rule of thumb, the window should be long enough to contain at least a few dozen messages on your slowest topic. If the metric is absent for partitions you expect to see it on, the window is likely too short for that topic's throughput.
+
+There is no performance penalty for longer windows — the Kafka `GetOffset` timestamp lookup is a single RPC per partition regardless of window size.
+
+**Note**
 
 This is a rough operational signal, not an SLA-grade measurement. 
 To calculate the exact sojourn time, you would need to read the actual record timestamps at the consumer's committed offset.
