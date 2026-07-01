@@ -145,15 +145,26 @@ This image is configurable using different flags
 | use.consumelag.zookeeper       | false          | if you need to use a group from zookeeper                                                                                                      |
 | zookeeper.server               | localhost:2181 | Address (hosts) of zookeeper server                                                                                                            |
 | kafka.labels                   |                | Kafka cluster name                                                                                                                             |
-| refresh.metadata               | 30s            | Metadata refresh interval                                                                                                                      |
+| refresh.metadata               | 30s            | Metadata refresh interval [(1)](#duration-format)                                                                                              |
 | offset.show-all                | true           | Whether show the offset/lag for all consumer group, otherwise, only show connected consumer groups                                             |
 | concurrent.enable              | false          | If true, all scrapes will trigger kafka operations otherwise, they will share results. WARN: This should be disabled on large clusters         |
 | topic.workers                  | 100            | Number of topic workers                                                                                                                        |
 | verbosity                      | 0              | Verbosity log level                                                                                                                            |
 | lag.emit-estimated-time        | false          | Enable estimated time-based consumer group lag metric (`kafka_consumergroup_estimated_lag_seconds`)                                            |
-| lag.time-window                | 1m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time`                                                                  |
+| lag.time-window                | 1m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time` [(1)](#duration-format)                                          |
+| group.metrics.timeout          | 5m             | Timeout for emitting consumer group metrics [(1)](#duration-format)                                                                             |
 
 ### Notes
+
+#### Duration format
+
+Flags marked with **(1)** accept a [Go duration string](https://pkg.go.dev/time#ParseDuration). 
+This is a sequence of decimal numbers each with a unit suffix. 
+Valid units are `ns`, `us` (or `µs`), `ms`, `s`, `m`, `h`. 
+Units can be combined (e.g. `1h30m`). 
+Bare numbers without a unit are not valid.
+
+#### Boolean values
 
 Boolean values are uniquely managed by [Kingpin](https://github.com/alecthomas/kingpin/blob/master/README.md#boolean-values). Each boolean flag will have a negative complement:
 `--<name>` and `--no-<name>`.
@@ -171,14 +182,14 @@ For details on the underlying metrics please see [Apache Kafka](https://kafka.ap
 
 ### Brokers
 
-**Metrics details**
+#### Metrics details
 
 | Name                | Exposed informations                   |
 |---------------------|----------------------------------------|
 | `kafka_brokers`     | Number of Brokers in the Kafka Cluster |
 | `kafka_broker_info` | Information about the Kafka Broker     |
 
-**Metrics output example**
+#### Metrics output example
 
 ```txt
 # HELP kafka_brokers Number of Brokers in the Kafka Cluster.
@@ -193,11 +204,11 @@ kafka_broker_info{address="b-3.kafka-example.org:9092",id="3"} 3
 
 ### Topics
 
-**Required permissions**
+#### Required permissions
 
 Describe all topics.
 
-**Metrics details**
+#### Metrics details
 
 | Name                                               | Exposed informations                                |
 |----------------------------------------------------|-----------------------------------------------------|
@@ -210,7 +221,7 @@ Describe all topics.
 | `kafka_topic_partition_replicas`                   | Number of Replicas for this Topic/Partition         |
 | `kafka_topic_partition_under_replicated_partition` | 1 if Topic/Partition is under Replicated            |
 
-**Metrics output example**
+#### Metrics output example
 
 ```txt
 # HELP kafka_topic_partitions Number of partitions for this Topic
@@ -248,11 +259,11 @@ kafka_topic_partition_under_replicated_partition{partition="0",topic="__consumer
 
 ### Consumer Groups
 
-**Required permissions**
+#### Required permissions
 
 Describe all groups.
 
-**Metrics details**
+#### Metrics details
 
 | Name                                         | Exposed informations                                                     |
 |----------------------------------------------|--------------------------------------------------------------------------|
@@ -264,7 +275,7 @@ Describe all groups.
 | `kafka_consumergroup_members`                | Amount of members in a consumer group                                    |
 | `kafka_consumergroup_estimated_lag_seconds`  | Estimated time-based lag of a ConsumerGroup at Topic/Partition (requires `--lag.emit-estimated-time`) |
 
-#### Important Note
+#### Zookeeper-based Clusters
 
 To be able to collect the metrics `kafka_consumergroupzookeeper_lag_zookeeper`, you must set the following flags:
 
@@ -277,13 +288,13 @@ To enable the metric `kafka_consumergroup_estimated_lag_seconds`, you must set t
 
 * `lag.emit-estimated-time`: enable estimated time-based consumer group lag
 
-Optionally, you can tune the lookback window (default `1m`):
+Optionally, you can tune the look-back window (default `1m`):
 
 * `lag.time-window`: how far back to look when estimating the message arrival rate (e.g. `30s`, `2m`, `5m`)
 
-**How it works:** The metric estimates how long a message sits in the partition before the consumer reads it (sojourn time), using Little's Law: `W = L / λ`, where `L` is the offset-based lag and `λ` is the message arrival rate estimated over the lookback window.
+**How it works:** The metric estimates how long a message sits in the partition before the consumer reads it (sojourn time), using Little's Law: `W = L / λ`, where `L` is the offset-based lag and `λ` is the message arrival rate estimated over the look-back window.
 
-**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the lookback window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag."
+**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the look-back window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag."
 
 **Accuracy caveats:**
 
@@ -294,9 +305,11 @@ Optionally, you can tune the lookback window (default `1m`):
 | New burst starting, consumer behind | Underestimates (masks real staleness) |
 | Compacted topic with offset gaps | Underestimates |
 
-This is a rough operational signal, not an SLA-grade measurement. For exact sojourn time, you would need to read the actual record timestamps at the consumer's committed offset.
+This is a rough operational signal, not an SLA-grade measurement. 
+To calculate the exact sojourn time, you would need to read the actual record timestamps at the consumer's committed offset.
+This would require reading messages from each partition, which is a heavy weight operation.
 
-**Metrics output example**
+#### Metrics output example
 
 ```txt
 # HELP kafka_consumergroup_current_offset Current Offset of a ConsumerGroup at Topic/Partition
@@ -325,9 +338,9 @@ kafka_consumergroup_estimated_lag_seconds{consumergroup="KMOffsetCache-kafka-man
 
 ```
 
-#### Do not see any Consumer group or Lag information
+#### Not seeing any Consumer group or Lag information?
 
-The consumer group metrics would not be available, if there is no consumer with a consumer group.
+The consumer group metrics will not be available if there is no consumer with a consumer group.
 
 Run consumer with a consumer group using command line tool
 ```bash
