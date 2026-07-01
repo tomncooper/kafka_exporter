@@ -64,6 +64,11 @@ var (
 	consumergroupEstimatedLagSeconds            *prometheus.Desc
 )
 
+type topicTimeWindow struct {
+	pattern *regexp.Regexp
+	window  time.Duration
+}
+
 // Exporter collects Kafka stats from the given server and exports them using
 // the prometheus metrics package.
 type Exporter struct {
@@ -88,6 +93,8 @@ type Exporter struct {
 	groupMetricsTimeout     time.Duration
 	emitEstimatedTimeLag              bool
 	estimatedTimeLagWindow           time.Duration
+	topicTimeWindows        []topicTimeWindow
+	topicWindowCache        sync.Map
 }
 
 type kafkaOpts struct {
@@ -131,6 +138,7 @@ type kafkaOpts struct {
 	groupMetricsTimeout      string
 	emitEstimatedTimeLag               bool
 	estimatedTimeLagWindow            string
+	topicTimeWindows         []string
 }
 
 type MSKAccessTokenProvider struct {
@@ -349,10 +357,29 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 	}
 
 	var estimatedTimeLagWindow time.Duration
+	var topicTimeWindows []topicTimeWindow
 	if opts.emitEstimatedTimeLag {
 		estimatedTimeLagWindow, err = time.ParseDuration(opts.estimatedTimeLagWindow)
 		if err != nil {
 			return nil, fmt.Errorf("Cannot parse lag time window: %w", err)
+		}
+		for _, entry := range opts.topicTimeWindows {
+			lastColon := strings.LastIndex(entry, ":")
+			if lastColon <= 0 {
+				return nil, fmt.Errorf("invalid --lag.topic-time-window %q: expected regex:duration", entry)
+			}
+			re, err := regexp.Compile(entry[:lastColon])
+			if err != nil {
+				return nil, fmt.Errorf("invalid regex in --lag.topic-time-window %q: %w", entry, err)
+			}
+			dur, err := time.ParseDuration(entry[lastColon+1:])
+			if err != nil {
+				return nil, fmt.Errorf("invalid duration in --lag.topic-time-window %q: %w", entry, err)
+			}
+			if dur <= 0 {
+				return nil, fmt.Errorf("duration must be positive in --lag.topic-time-window %q", entry)
+			}
+			topicTimeWindows = append(topicTimeWindows, topicTimeWindow{pattern: re, window: dur})
 		}
 	}
 
@@ -388,7 +415,23 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		groupMetricsTimeout:     groupMetricsTimeout,
 		emitEstimatedTimeLag:              opts.emitEstimatedTimeLag,
 		estimatedTimeLagWindow:           estimatedTimeLagWindow,
+		topicTimeWindows:        topicTimeWindows,
 	}, nil
+}
+
+func (e *Exporter) windowForTopic(topic string) time.Duration {
+	if v, ok := e.topicWindowCache.Load(topic); ok {
+		return v.(time.Duration)
+	}
+	w := e.estimatedTimeLagWindow
+	for _, tw := range e.topicTimeWindows {
+		if tw.pattern.MatchString(topic) {
+			w = tw.window
+			break
+		}
+	}
+	e.topicWindowCache.Store(topic, w)
+	return w
 }
 
 func (e *Exporter) fetchOffsetVersion() int16 {
@@ -567,8 +610,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 			}
 
 			if e.emitEstimatedTimeLag {
+				topicWindow := e.windowForTopic(topic)
 				windowOffset, err := e.client.GetOffset(topic, partition,
-					time.Now().UnixMilli()-e.estimatedTimeLagWindow.Milliseconds())
+					time.Now().UnixMilli()-topicWindow.Milliseconds())
 				if err == nil {
 					e.mu.Lock()
 					rateOffset[topic][partition] = windowOffset
@@ -848,7 +892,7 @@ func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sara
 				)
 				if e.emitEstimatedTimeLag && rateOffsetMap != nil {
 					if windowOffset, ok := rateOffsetMap[topic][partition]; ok && windowOffset >= 0 {
-						rate := float64(currentPartitionOffset-windowOffset) / e.estimatedTimeLagWindow.Seconds()
+						rate := float64(currentPartitionOffset-windowOffset) / e.windowForTopic(topic).Seconds()
 						if rate > 0 && lag > 0 {
 							lagSeconds := float64(lag) / rate
 							ch <- prometheus.MustNewConstMetric(
@@ -962,7 +1006,8 @@ func main() {
 	toFlagIntVar("verbosity", "Verbosity log level", 0, "0", &opts.verbosityLogLevel)
 	toFlagStringVar("group.metrics.timeout", "Timeout for emitting consumer group metrics", "5m", &opts.groupMetricsTimeout)
 	toFlagBoolVar("lag.emit-estimated-time", "Enable estimated time-based consumer group lag metric (kafka_consumergroup_estimated_lag_seconds), default is false.", false, "false", &opts.emitEstimatedTimeLag)
-	toFlagStringVar("lag.time-window", "Lookback window for arrival rate estimation used by lag.emit-estimated-time", "5m", &opts.estimatedTimeLagWindow)
+	toFlagStringVar("lag.global-time-window", "Lookback window for arrival rate estimation used by lag.emit-estimated-time", "5m", &opts.estimatedTimeLagWindow)
+	toFlagStringsVar("lag.topic-time-window", "Per-topic lookback window override as regex:duration (e.g. 'high-throughput-.*:30s'). Repeatable; first match wins. Falls back to --lag.global-time-window.", "", &opts.topicTimeWindows)
 
 	plConfig := plog.Config{}
 	plogflag.AddFlags(kingpin.CommandLine, &plConfig)

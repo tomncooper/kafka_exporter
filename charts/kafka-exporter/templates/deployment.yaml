@@ -82,6 +82,17 @@ spec:
             {{- if .Values.kafkaExporter.log.enableSarama }}
             - --log.enable-sarama
             {{- end }}
+            {{- if .Values.kafkaExporter.lag }}
+            {{- if .Values.kafkaExporter.lag.emitEstimatedTime }}
+            - --lag.emit-estimated-time
+            {{- if .Values.kafkaExporter.lag.globalTimeWindow }}
+            - --lag.global-time-window={{ .Values.kafkaExporter.lag.globalTimeWindow }}
+            {{- end }}
+            {{- range .Values.kafkaExporter.lag.topicTimeWindows }}
+            - "--lag.topic-time-window={{ . }}"
+            {{- end }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 9308

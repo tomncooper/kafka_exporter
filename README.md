@@ -151,7 +151,8 @@ This image is configurable using different flags
 | topic.workers                  | 100            | Number of topic workers                                                                                                                        |
 | verbosity                      | 0              | Verbosity log level                                                                                                                            |
 | lag.emit-estimated-time        | false          | Enable estimated time-based consumer group lag metric (`kafka_consumergroup_estimated_lag_seconds`)                                            |
-| lag.time-window                | 5m             | Lookback window for arrival rate estimation used by `lag.emit-estimated-time` [(1)](#duration-format)                                          |
+| lag.global-time-window         | 5m             | Default lookback window for arrival rate estimation used by `lag.emit-estimated-time` [(1)](#duration-format)                                  |
+| lag.topic-time-window          |                | Per-topic lookback window override as `regex:duration` (e.g. `high-throughput-.*:30s`). Repeatable; first match wins. Falls back to `lag.global-time-window` [(1)](#duration-format) |
 | group.metrics.timeout          | 5m             | Timeout for emitting consumer group metrics [(1)](#duration-format)                                                                             |
 
 ### Notes
@@ -290,11 +291,12 @@ To enable the metric `kafka_consumergroup_estimated_lag_seconds`, you must set t
 
 Optionally, you can tune the look-back window (default `5m`):
 
-* `lag.time-window`: how far back to look when estimating the message arrival rate (e.g. `30s`, `2m`, `5m`)
+* `lag.global-time-window`: how far back to look when estimating the message arrival rate (e.g. `30s`, `2m`, `5m`)
+* `lag.topic-time-window`: per-topic override as `regex:duration` (repeatable, first match wins)
 
 **How it works:** The metric estimates how long a message sits in the partition before the consumer reads it (sojourn time), using Little's Law: `W = L / λ`, where `L` is the offset-based lag and `λ` is the message arrival rate estimated over the look-back window.
 
-**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the look-back window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag." Do not alert on `absent(kafka_consumergroup_estimated_lag_seconds)` — use the offset-based `kafka_consumergroup_lag` metric for availability alerting instead. For low-throughput topics where the metric appears intermittently, increase `--lag.time-window` (e.g. `10m`, `15m`) to capture enough messages for a reliable rate estimate.
+**When it is not emitted:** The metric is silently omitted for idle partitions (no messages arrived in the look-back window) and caught-up consumers (lag <= 0). Absence means "cannot estimate," not "zero lag." Do not alert on `absent(kafka_consumergroup_estimated_lag_seconds)` — use the offset-based `kafka_consumergroup_lag` metric for availability alerting instead. For low-throughput topics where the metric appears intermittently, increase `--lag.global-time-window` (e.g. `10m`, `15m`) or use `--lag.topic-time-window` to set a longer window for specific topics.
 
 **Accuracy caveats:**
 
@@ -318,6 +320,22 @@ The look-back window controls how far back the exporter looks to estimate messag
 As a rule of thumb, the window should be long enough to contain at least a few dozen messages on your slowest topic. If the metric is absent for partitions you expect to see it on, the window is likely too short for that topic's throughput.
 
 There is no performance penalty for longer windows — the Kafka `GetOffset` timestamp lookup is a single RPC per partition regardless of window size.
+
+**Per-topic window overrides:**
+
+If your cluster has topics with vastly different throughput rates, a single global window may not work well for all of them. Use `--lag.topic-time-window` to set per-topic overrides:
+
+```
+kafka_exporter \
+  --lag.emit-estimated-time \
+  --lag.global-time-window=5m \
+  --lag.topic-time-window="high-throughput-.*:30s" \
+  --lag.topic-time-window="low-volume-.*:15m"
+```
+
+Each value is a `regex:duration` pair. The regex is matched against the full topic name. Overrides are evaluated in the order given; the first match wins. Topics that do not match any override use the global `--lag.global-time-window`.
+
+If a regex itself contains `:` characters, the split is performed on the *last* `:` in the value, so `my:topic:regex:2m` is parsed as regex `my:topic:regex` with duration `2m`.
 
 **Note**
 

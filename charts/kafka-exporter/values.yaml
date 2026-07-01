@@ -38,6 +38,13 @@ kafkaExporter:
     certFile: ""
     keyFile: ""
 
+  lag:
+    emitEstimatedTime: false
+    globalTimeWindow: "5m"
+    topicTimeWindows: []
+      # - "high-throughput-.*:30s"
+      # - "low-volume-.*:15m"
+
   log:
     verbosity: 0
     enableSarama: false
