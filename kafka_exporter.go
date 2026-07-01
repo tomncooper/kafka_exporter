@@ -844,6 +844,18 @@ func (e *Exporter) emitGroupMetrics(group *sarama.GroupDescription, broker *sara
 				ch <- prometheus.MustNewConstMetric(
 					consumergroupLag, prometheus.GaugeValue, float64(lag), group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 				)
+				if e.useTimeLag && rateOffsetMap != nil {
+					if windowOffset, ok := rateOffsetMap[topic][partition]; ok {
+						rate := float64(currentPartitionOffset-windowOffset) / e.timeLagWindow.Seconds()
+						if rate > 0 && lag > 0 {
+							lagSeconds := float64(lag) / rate
+							ch <- prometheus.MustNewConstMetric(
+								consumergroupLagSeconds, prometheus.GaugeValue, lagSeconds,
+								group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
+							)
+						}
+					}
+				}
 			}
 		}
 		ch <- prometheus.MustNewConstMetric(
