@@ -14,9 +14,9 @@ func newTestExporter(global time.Duration, overrides []topicTimeWindow) *Exporte
 }
 
 func TestWindowForTopic_NoOverrides(t *testing.T) {
-	e := newTestExporter(5*time.Minute, nil)
-	if got := e.windowForTopic("any-topic"); got != 5*time.Minute {
-		t.Errorf("expected 5m, got %v", got)
+	e := newTestExporter(10*time.Minute, nil)
+	if got := e.windowForTopic("any-topic"); got != 10*time.Minute {
+		t.Errorf("expected 10m, got %v", got)
 	}
 }
 
@@ -123,13 +123,13 @@ func TestParseTopicTimeWindows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := kafkaOpts{
-				uri:                    []string{"localhost:9092"},
-				kafkaVersion:           "2.0.0",
+				uri:                     []string{"localhost:9092"},
+				kafkaVersion:            "2.0.0",
 				metadataRefreshInterval: "30s",
-				groupMetricsTimeout:    "5m",
-				estimatedTimeLagWindow: "5m",
-				emitEstimatedTimeLag:   true,
-				topicTimeWindows:       tt.input,
+				groupMetricsTimeout:     "5m",
+				estimatedTimeLagWindow:  "5m",
+				emitEstimatedTimeLag:    true,
+				topicTimeWindows:        tt.input,
 			}
 			_, err := NewExporter(opts, ".*", "^$", ".*", "^$")
 			if tt.wantErr == "" {

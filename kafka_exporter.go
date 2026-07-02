@@ -61,7 +61,7 @@ var (
 	consumergroupLagSum                *prometheus.Desc
 	consumergroupLagZookeeper          *prometheus.Desc
 	consumergroupMembers               *prometheus.Desc
-	consumergroupEstimatedLagSeconds            *prometheus.Desc
+	consumergroupEstimatedLagSeconds   *prometheus.Desc
 )
 
 type topicTimeWindow struct {
@@ -91,8 +91,8 @@ type Exporter struct {
 	sgChans                 []chan<- prometheus.Metric
 	consumerGroupFetchAll   bool
 	groupMetricsTimeout     time.Duration
-	emitEstimatedTimeLag              bool
-	estimatedTimeLagWindow           time.Duration
+	emitEstimatedTimeLag    bool
+	estimatedTimeLagWindow  time.Duration
 	topicTimeWindows        []topicTimeWindow
 	topicWindowCache        sync.Map
 }
@@ -136,8 +136,8 @@ type kafkaOpts struct {
 	allowAutoTopicCreation   bool
 	verbosityLogLevel        int
 	groupMetricsTimeout      string
-	emitEstimatedTimeLag               bool
-	estimatedTimeLagWindow            string
+	emitEstimatedTimeLag     bool
+	estimatedTimeLagWindow   string
 	topicTimeWindows         []string
 }
 
@@ -413,8 +413,8 @@ func NewExporter(opts kafkaOpts, topicFilter string, topicExclude string, groupF
 		sgChans:                 []chan<- prometheus.Metric{},
 		consumerGroupFetchAll:   config.Version.IsAtLeast(sarama.V2_0_0_0),
 		groupMetricsTimeout:     groupMetricsTimeout,
-		emitEstimatedTimeLag:              opts.emitEstimatedTimeLag,
-		estimatedTimeLagWindow:           estimatedTimeLagWindow,
+		emitEstimatedTimeLag:    opts.emitEstimatedTimeLag,
+		estimatedTimeLagWindow:  estimatedTimeLagWindow,
 		topicTimeWindows:        topicTimeWindows,
 	}, nil
 }
